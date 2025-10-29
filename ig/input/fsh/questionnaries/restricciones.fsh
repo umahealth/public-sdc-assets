@@ -14,6 +14,7 @@ Alias: $alergias-valueset = https://fhir.example.org/ValueSet/allergies-jis
 Alias: $categories = http://hl7.org/fhir/allergy-intolerance-category
 Alias: $targetConstraint = http://hl7.org/fhir/StructureDefinition/targetConstraint
 Alias: $sdc-variable = http://hl7.org/fhir/StructureDefinition/variable
+Alias: $calculatedExpression = http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-calculatedExpression
 
 Instance: Restricciones
 InstanceOf: Questionnaire
@@ -75,6 +76,13 @@ Usage: #definition
     * expression = "%resource.item.where(linkId='medical-history').item.where(linkId='allergies').item.where(linkId = 'allergy-substance').answer.valueCoding.select(code + '|' + system)"
     * name = "allergies"
     * description = "Alergias"
+* extension[+]
+  * url = $sdc-variable
+  * valueExpression
+    * language = #text/fhirpath
+    * expression = "%resource.repeat(item).where(linkId='bmi').answer.value.value.first()"
+    * name = "bmi"
+    * description = "Índice de masa corporal (calculado desde peso y altura)"
 
 //SECCION DATOS FILIATORIOS
 * item[+]
@@ -414,3 +422,291 @@ Usage: #definition
         * extension[+]
           * url = "human"
           * valueString = "La fecha de fin no puede ser menor a la fecha de inicio"
+
+
+// SECCION ENFERMEDADES ASOCIADAS (enableWhenExpression)
+* item[+]
+  * type = #group
+  * linkId = "associated-diseases"
+  * text = "Enfermedades asociadas"
+  * required = false
+  * repeats = false
+  * readOnly = false
+  
+  // enableWhenExpression: BMI > 30 AND sexo femenino AND alergias > 0
+  * extension[+]
+    * url = "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-enableWhenExpression"
+    * valueExpression
+      * language = #text/fhirpath
+      * expression = "%bmi > 30 and %resource.repeat(item).where(linkId='gender').answer.valueCoding.code.first() = 'female' and %allergies.count() > 0"
+  
+  // PREGUNTA: ¿Tenes alguna de estas enfermedades?
+  * item[+]
+    * type = #choice
+    * linkId = "chronic-diseases"
+    * text = "¿Tenes alguna de estas enfermedades?"
+    * required = false
+    * repeats = true
+    * readOnly = false
+    * answerOption[+].valueCoding = $sct#999001 "Enfermedad autoinmune"
+    * answerOption[+].valueCoding = $sct#999002 "Diabetes gestacional"
+    * answerOption[+].valueCoding = $sct#999003 "Vasculitis"
+    * extension[+]
+      * url = $questionnaire-itemControl
+      * valueCodeableConcept = $questionnaire-item-control#check-box "Check-box"
+
+//////////////////////////////////////////////////
+// SECCION TRATAMIENTO (MEDICAMENTOS CON CALCULO)
+//////////////////////////////////////////////////
+* item[+]
+  * type = #group
+  * linkId = "seccion-medicamentos"
+  * text = "Tratamiento e indicaciones"
+  * required = false
+  * repeats = true
+  * readOnly = false
+  
+  // Extensión que permite mostrar el grid en tablas
+  * extension[+]
+    * url = $questionnaire-itemControl
+    * valueCodeableConcept = $questionnaire-item-control#grid "Grid"
+
+  // Variables para cálculo de unidades totales
+  // Variable 1: Número de unidades por toma
+  * extension[+]
+    * url = $sdc-variable
+    * valueExpression
+      * language = #text/fhirpath
+      * expression = "repeat(item).where(linkId='medicamentos-indicaciones-nro-pastillas').answer.value.value"
+      * name = "nroportoma"
+      * description = "Número de unidades por toma"
+
+  // Variable 2: Veces por día calculado según intervalo interdosis
+  * extension[+]
+    * url = $sdc-variable
+    * valueExpression
+      * language = #text/fhirpath
+      * expression = "item.where(linkId='medicamentos-grid-fila-1') .item.where(linkId='medicamentos-indicaciones-intervalo-interdosis') .answer.value .select( (iif(code = 'h', 24, {}) | iif(code = 'd', 1, {})).first() / value.toDecimal() )"
+      * name = "intervalovalueinterdosis"
+      * description = "Veces por día calculado según intervalo interdosis"
+
+  // Variable 3: Días totales de tratamiento calculado
+  * extension[+]
+    * url = $sdc-variable
+    * valueExpression
+      * language = #text/fhirpath
+      * expression = "item.where(linkId='medicamentos-grid-fila-2') .item.where(linkId='medicamentos-indicaciones-tiempo-total-tto') .answer.value .select( value.toDecimal() * iif(code = 'd', 1, iif(code = '/wk', 7, iif(code = 'mo', 30, iif(code = 'a', 365, 0)))) )"
+      * name = "tiempotot"
+      * description = "Días totales de tratamiento calculado"
+
+  ///FILA 0: MEDICAMENTO///
+  * item[+]
+    * type = #group
+    * linkId = "medicamentos-grid-fila-0"
+    * required = false
+    * repeats = false
+    * readOnly = false
+
+    // MEDICAMENTO
+    * item[+]
+      * type = #choice
+      * linkId = "medicamentos-item"
+      * text = "Medicamento"
+      * required = false
+      * repeats = false
+      * readOnly = false
+      * answerOption[+].valueCoding = $sct#387207008 "ibuprofeno"
+      * answerOption[+].valueCoding = $sct#387517004 "paracetamol"
+      * answerOption[+].valueCoding = $sct#372687004 "amoxicilina"
+      * answerOption[+].valueCoding = $sct#387475002 "furosemida"
+      * answerOption[+].valueCoding = $sct#387458008 "aspirina"
+      * extension[+]
+        * url = $questionnaire-itemControl
+        * valueCodeableConcept = $questionnaire-item-control#drop-down "Drop down"
+
+  ///FILA 1: PRESENTACION + INTERVALO INTERDOSIS///
+  * item[+]
+    * type = #group
+    * linkId = "medicamentos-grid-fila-1"
+    * required = false
+    * repeats = false
+    * readOnly = false
+
+    // PRESENTACION (Nro de pastillas/unidades por toma)
+    * item[+]
+      * type = #quantity
+      * linkId = "medicamentos-indicaciones-nro-pastillas"
+      * text = "Se recetan"
+      * required = false
+      * repeats = false
+      * readOnly = false
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#408102007 "unidades"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#413516001 "ampollas"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#415215001 "puffs"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#733013000 "sobres"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#430293001 "supositorio"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#700482006 "tableta vaginal"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#413568008 "aplicaciones"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#228085004 "caramelos"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#700483001 "cápsula vaginal"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#1230358003 "efervescentes"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#404218003 "gotas"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $sct#422237004 "inhalaciones"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#mL "mililitros"
+      * extension[+]
+        * url = $minValue
+        * valueQuantity.value = 0
+      * extension[+]
+        * url = $maxValue
+        * valueQuantity.value = 200
+
+    // INTERVALO INTERDOSIS
+    * item[+]
+      * type = #quantity
+      * linkId = "medicamentos-indicaciones-intervalo-interdosis"
+      * text = "Cada:"
+      * required = false
+      * repeats = false
+      * readOnly = false
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#h "horas"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#d "días"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#min "minutos"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#wk "semanas"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#mo "meses"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#a "años"
+      * extension[+]
+        * url = $minValue
+        * valueQuantity.value = 0
+      * extension[+]
+        * url = $maxValue
+        * valueQuantity.value = 1000
+
+  ///FILA 2: DURACION TTO + TOTAL UNIDADES///
+  * item[+]
+    * type = #group
+    * linkId = "medicamentos-grid-fila-2"
+    * required = false
+    * repeats = false
+    * readOnly = false
+
+    // DURACION DEL TRATAMIENTO
+    * item[+]
+      * type = #quantity
+      * linkId = "medicamentos-indicaciones-tiempo-total-tto"
+      * text = "Durante:"
+      * required = false
+      * repeats = false
+      * readOnly = false
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#d "días"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#/wk "semanas"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#mo "meses"
+      * extension[+]
+        * url = $questionnaire-unitOption
+        * valueCoding = $ucum#a "años"
+      * extension[+]
+        * url = $minValue
+        * valueQuantity.value = 0
+      * extension[+]
+        * url = $maxValue
+        * valueQuantity.value = 10000
+
+    // TOTAL UNIDADES (CALCULADO)
+    * item[+]
+      * type = #integer
+      * linkId = "medicamentos-indicaciones-total-unidades"
+      * text = "Cantidad a recibir"
+      * required = false
+      * repeats = false
+      * readOnly = false
+      // Extensión para configurar el calculatedExpression
+      * extension[+]
+        * url = $calculatedExpression
+        * valueExpression
+          * language = #text/fhirpath
+          * expression = "iif(%nroportoma.exists() and %intervalovalueinterdosis.exists() and %tiempotot.exists() and %intervalovalueinterdosis.toDecimal() > 0 and %tiempotot.toDecimal() > 0, (%nroportoma.toDecimal() * %intervalovalueinterdosis.toDecimal() * %tiempotot.toDecimal()).round(0), {})"
+          * description = "Total de unidades calculado"
+      * extension[+]
+        * url = $minValue
+        * valueInteger = 1
+      * extension[+]
+        * url = $maxValue
+        * valueInteger = 10000
+
+  ///FILA 3: VIA DE ADMINISTRACION + OBSERVACIONES///
+  * item[+]
+    * type = #group
+    * linkId = "medicamentos-grid-fila-3"
+    * required = false
+    * repeats = false
+    * readOnly = false
+
+    // VIA DE ADMINISTRACION
+    * item[+]
+      * type = #choice
+      * linkId = "medicamentos-indicaciones-via-administracion"
+      * text = "Vía de administración"
+      * required = false
+      * repeats = false
+      * readOnly = false
+      * answerOption[+].valueCoding = $sct#26643006 "oral"
+      * answerOption[=].initialSelected = true
+      * answerOption[+].valueCoding = $sct#47625008 "intravenosa"
+      * answerOption[+].valueCoding = $sct#78421000 "intramuscular"
+      * answerOption[+].valueCoding = $sct#372449004 "dental"
+      * answerOption[+].valueCoding = $sct#6064005 "tópica"
+      * extension[+]
+        * url = $questionnaire-itemControl
+        * valueCodeableConcept = $questionnaire-item-control#drop-down "Drop down"
+
+    // OBSERVACIONES
+    * item[+]
+      * type = #text
+      * linkId = "medicamentos-indicaciones-observacion"
+      * text = "Observaciones"
+      * required = false
+      * repeats = false
+      * readOnly = false
