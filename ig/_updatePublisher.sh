@@ -1,7 +1,8 @@
 #!/bin/bash
-pubsource=https://github.com/HL7/fhir-ig-publisher/releases/download/2.0.16/
+pubsource=https://github.com/HL7/fhir-ig-publisher/releases/latest/download/
 publisher_jar=publisher.jar
 dlurl=$pubsource$publisher_jar
+
 input_cache_path=$PWD/input-cache/
 
 scriptdlroot=https://raw.githubusercontent.com/HL7/ig-publisher-scripts/main
